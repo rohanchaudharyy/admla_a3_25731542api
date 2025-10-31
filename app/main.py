@@ -8,8 +8,8 @@ import requests
 
 app = FastAPI(
     title="Ethereum Next-Day High Prediction API",
-    description="Predict Ethereum next-day high price using a trained Linear Regression model and Kraken historical data.",
-    version="1.1.0"
+    description="Predict Ethereum next-day high price using a trained Linear Regression model and Kraken OHLC data.",
+    version="1.0.1"
 )
 
 # =====================================================
@@ -32,38 +32,40 @@ except Exception as e:
 # =====================================================
 # 2. Fetch Historical Data from Kraken
 # =====================================================
-def fetch_historical_data(token: str = "ETH", days: int = 30) -> pd.DataFrame:
+def fetch_historical_data(token="ETH", days=30) -> pd.DataFrame:
     """
-    Fetch historical OHLC daily data from Kraken for ETH-USD.
+    Fetch historical OHLC data from Kraken public API.
     """
-    pair = "XETHZUSD"
-    url = f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval=1440&since={int((datetime.datetime.now() - datetime.timedelta(days=days)).timestamp())}"
+    pair = f"X{token}ZUSD"
+    url = f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval=1440"
     response = requests.get(url)
-    
     if response.status_code != 200:
         raise HTTPException(status_code=500, detail=f"Failed to fetch data: {response.status_code}")
-    
+
     data = response.json()
-    if data.get("error"):
+    if "error" in data and len(data["error"]) > 0:
         raise HTTPException(status_code=500, detail=f"Kraken API error: {data['error']}")
-    
+
     ohlc = data["result"][pair]
-    df = pd.DataFrame(ohlc, columns=["time", "open", "high", "low", "close", "vwap", "volume", "count"])
+    df = pd.DataFrame(ohlc, columns=[
+        "time","open","high","low","close","vwap","volume","count"
+    ])
     df[["open","high","low","close","vwap","volume"]] = df[["open","high","low","close","vwap","volume"]].astype(float)
-    df["time"] = pd.to_datetime(df["time"], unit="s")
-    df["year"] = df["time"].dt.year
-    df["month"] = df["time"].dt.month
-    df["day"] = df["time"].dt.day
-    df["weekday"] = df["time"].dt.weekday
+    df["date"] = pd.to_datetime(df["time"], unit="s")
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month
+    df["day"] = df["date"].dt.day
+    df["weekday"] = df["date"].dt.weekday
     df["hour"] = 0  # daily data has no hour
+    df = df.tail(days)
     return df
 
 # =====================================================
-# 3. Create Features for the Model
+# 3. Prepare Features for Prediction
 # =====================================================
-def create_features(input_date: datetime.datetime, token: str = "ETH") -> pd.DataFrame:
+def create_features(input_date: datetime.datetime, token="ETH") -> pd.DataFrame:
     df = fetch_historical_data(token, days=30)
-    df = df[df["time"].dt.date <= input_date.date()]
+    df = df[df["date"].dt.date <= input_date.date()]
     if df.empty:
         raise HTTPException(status_code=404, detail=f"No historical data available before {input_date.date()}")
     
@@ -73,7 +75,7 @@ def create_features(input_date: datetime.datetime, token: str = "ETH") -> pd.Dat
         "high": latest_row["high"],
         "low": latest_row["low"],
         "close": latest_row["close"],
-        "volume": latest_row["volume"],  
+        "volume": latest_row["volume"],
         "marketcap": 1,  # placeholder
         "year": latest_row["year"],
         "month": latest_row["month"],
@@ -81,12 +83,12 @@ def create_features(input_date: datetime.datetime, token: str = "ETH") -> pd.Dat
         "weekday": latest_row["weekday"],
         "hour": latest_row["hour"]
     }
-    
+
     df_features = pd.DataFrame([feature_row])
     for col in features_list:
         if col not in df_features.columns:
-            df_features[col] = 0
-    df_features = df_features[features_list]
+            df_features[col] = 0  # fill missing columns
+    df_features = df_features[features_list]  # reorder
     return df_features
 
 # =====================================================
@@ -101,7 +103,7 @@ def root():
             "/health/": "Health check endpoint",
             "/predict/{token}/{date}": "Predict next-day high of {token} on a specific date"
         },
-        "input": {"token": "e.g., ETH", "date": "YYYY-MM-DD"},
+        "input": {"token": "ETH", "date": "YYYY-MM-DD"},
         "output": {"next_day_high_prediction_usd": "float"}
     }
 
@@ -110,7 +112,7 @@ def root():
 # =====================================================
 @app.get("/health/")
 def health_check():
-    return {"status": "API is running and model loaded" if model else "Model not loaded"}
+    return {"status": "API running", "model_loaded": model is not None}
 
 # =====================================================
 # 6. Prediction Endpoint
@@ -119,7 +121,6 @@ def health_check():
 def predict(token: str, date: str):
     if model is None or scaler is None:
         raise HTTPException(status_code=500, detail="Model not loaded.")
-    
     try:
         input_date = datetime.datetime.strptime(date, "%Y-%m-%d")
     except ValueError:
@@ -138,3 +139,11 @@ def predict(token: str, date: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+# =====================================================
+# 7. Run Uvicorn for Render
+# =====================================================
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
