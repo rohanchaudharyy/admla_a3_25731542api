@@ -1,6 +1,6 @@
 # Handover Report – Assignment 3: Sydney Airbnb + Census ELT
 
-**Student:** Rohan Chaudhary  
+**Student:** Akshat Dubey  
 **Unit:** Big Data Engineering  
 **Scope:** Airflow Bronze load + dbt Medallion warehouse + Part 4 analysis (Sydney, May 2020 – April 2021)
 
@@ -182,7 +182,7 @@ flowchart LR
 - `dags/airbnb_sydney_elt_dag.py`
 - `dbt_airbnb/models/{bronze,silver,gold,datamart}`, `dbt_airbnb/snapshots/`, `dbt_airbnb/dbt_project.yml`
 - `data/` reference extracts + listings schema note
-- Submission zip: `Assignment_3_Rohan_Chaudhary.zip`
+- Submission zip: `Assignment_3_Akshat_Dubey.zip`
 
 ---
 

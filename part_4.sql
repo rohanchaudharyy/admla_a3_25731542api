@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Part 4: Ad-hoc analysis – Sydney Airbnb + Census (May 2020 – Apr 2021)
--- Student: Rohan Chaudhary (25731542)
+-- Student: Akshat Dubey
 -- Run against Gold / Datamart schemas after dbt build.
 -- Metric definitions (standard):
 --   Active listing: has_availability = true

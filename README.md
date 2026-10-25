@@ -1,4 +1,4 @@
-# Assignment 3 – Sydney Airbnb + Census ELT (Rohan Chaudhary)
+# Assignment 3 – Sydney Airbnb + Census ELT (Akshat Dubey)
 
 Big Data Engineering: Airflow → Bronze Postgres, dbt Cloud Medallion (Bronze / Silver / Gold / Datamart), Part 4 ad-hoc SQL.
 
@@ -12,7 +12,7 @@ Big Data Engineering: Airflow → Bronze Postgres, dbt Cloud Medallion (Bronze /
 | `dbt_airbnb/` | dbt project: `models/`, `snapshots/`, `dbt_project.yml` |
 | `data/` | Census + LGA reference files; listings placeholders |
 | `docs/Assignment_3_Handover_Report.md` | Handover report (≤3000 words) |
-| `Assignment_3_Rohan_Chaudhary.zip` | Submission bundle |
+| `Assignment_3_Akshat_Dubey.zip` | Submission bundle |
 
 ## Quick start (GCP + dbt Cloud)
 

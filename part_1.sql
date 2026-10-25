@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Part 1: Bronze schema + raw table DDL (Sydney Airbnb + Census + LGA mapping)
--- Student: Rohan Chaudhary (25731542)
+-- Student: Akshat Dubey
 -- Run in DBeaver / psql against the Cloud SQL Postgres instance before the DAG.
 -- =============================================================================
 

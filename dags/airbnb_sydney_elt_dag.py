@@ -91,7 +91,7 @@ LISTINGS_COLUMNS = [
 ]
 
 default_args = {
-    "owner": "rohan_chaudhary",
+    "owner": "akshat_dubey",
     "depends_on_past": False,
     "start_date": datetime(2020, 5, 1),
     "retries": 1,
