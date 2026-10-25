@@ -46,8 +46,8 @@ Airflow does **not** call dbt. After each chronological monthly load, run `dbt s
 ### Part 1 – Bronze + Airflow
 1. Execute `part_1.sql` to create `bronze` tables (`listings_raw`, `census_g01_raw`, `census_g02_raw`, `lga_code_raw`, `lga_suburb_raw`).
 2. Upload data folders to the Composer GCS bucket.
-3. Deploy `dags/airbnb_sydney_elt_dag.py`, set `BUCKET_NAME` and Postgres connection `postgres_bde`.
-4. Trigger the DAG once: truncate → load static files → load 12 months in order.
+3. Deploy **`dags/airbnb_sydney_elt_dag_v2.py`** (preferred; COPY + Variables). Set connection `postgres_bde` and Variables `airbnb_gcs_bucket`, `airbnb_truncate`, `airbnb_load_month` (see `docs/dag-run-smoother.md`). Pause legacy `airbnb_sydney_elt_dag.py` if both are present.
+4. First run: `airbnb_truncate=true`, load `05_2020` or `all`. Later months: `airbnb_truncate=false`, set `airbnb_load_month` to the next stem — no DAG re-upload.
 
 ### Part 2 – dbt Medallion
 Project path: `dbt_airbnb/`.
@@ -98,6 +98,7 @@ Queries live in `part_4.sql`. They must be executed on a warehouse populated wit
 | `listing_id` alone as PK | Composite `(listing_id, scraped_date)` for monthly history |
 | Suburb vs LGA for hosts | `dim_host_neighbourhood` maps suburb → `host_neighbourhood_lga` via `lga_suburb` |
 | dbt custom schemas becoming `target_silver` | `generate_schema_name` macro forces bare `silver` / `gold` / `datamart` |
+| Slow Composer loads with row-by-row INSERT (v1) | Added v2 DAG using Postgres COPY + Airflow Variables |
 | No Cloud Composer / Cloud SQL / dbt Cloud credentials in this environment | All SQL/Python/dbt authored offline; live run left for student GCP project |
 
 ---

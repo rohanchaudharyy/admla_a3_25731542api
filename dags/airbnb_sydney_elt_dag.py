@@ -1,14 +1,12 @@
 """
-Combined Airflow DAG for Parts 1 and 3 – Sydney Airbnb + Census ELT (Bronze load).
+Legacy DAG (v1) – row-by-row INSERT loads.
 
-- schedule_interval=None  (manual trigger only)
-- Loads Census G01/G02 + NSW LGA mappings once, then Airbnb months chronologically
-- Does NOT trigger dbt Cloud (run dbt manually after each monthly load per Part 3)
+Prefer the Composer-optimised DAG instead:
+    dags/airbnb_sydney_elt_dag_v2.py
+    dag_id = sydney_airbnb_bronze_elt_v2
 
-Upload to Cloud Composer DAGs folder. Configure:
-  - Airflow connection `postgres_bde` → Cloud SQL Postgres
-  - Variable / const BUCKET_NAME → Composer GCS data bucket
-  - Place files under data/ in that bucket (see STATIC_FILES / MONTHLY_FILES)
+See docs/dag-run-smoother.md (also in the submission zip / project store).
+This file is kept only for reference; pause it in Composer if both are deployed.
 """
 
 from __future__ import annotations
@@ -25,14 +23,10 @@ from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from google.cloud import storage
 
-# ---------------------------------------------------------------------------
-# Configuration – update BUCKET_NAME / POSTGRES_CONN_ID for your GCP project
-# ---------------------------------------------------------------------------
-BUCKET_NAME = "REPLACE_WITH_COMPOSER_BUCKET"  # e.g. us-central1-bde-xxxx-bucket
+BUCKET_NAME = "REPLACE_WITH_COMPOSER_BUCKET"
 POSTGRES_CONN_ID = "postgres_bde"
 AIRBNB_TABLE = "bronze.listings_raw"
 
-# Static reference files (Part 1 initial load)
 STATIC_FILES = {
     "bronze.census_g01_raw": "data/Census LGA/2016Census_G01_NSW_LGA.csv",
     "bronze.census_g02_raw": "data/Census LGA/2016Census_G02_NSW_LGA.csv",
@@ -40,7 +34,6 @@ STATIC_FILES = {
     "bronze.lga_suburb_raw": "data/NSW_LGA/NSW_LGA_SUBURB.csv",
 }
 
-# 12 months May 2020 – April 2021 (chronological)
 MONTHLY_FILES = [
     "05_2020",
     "06_2020",
@@ -64,7 +57,6 @@ TABLES_TO_TRUNCATE = [
     "bronze.lga_suburb_raw",
 ]
 
-# Canonical column order for curated Airbnb CSVs
 LISTINGS_COLUMNS = [
     "listing_id",
     "scrape_id",
@@ -100,7 +92,6 @@ default_args = {
 
 
 def _normalize_date(value):
-    """Accept YYYY-MM-DD or DD/MM/YYYY strings from curated CSVs."""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     if isinstance(value, datetime):
@@ -123,7 +114,6 @@ def _download_csv_df(file_key: str) -> pd.DataFrame:
         raise FileNotFoundError(f"gs://{BUCKET_NAME}/{file_key} not found")
     content = blob.download_as_text()
     df = pd.read_csv(io.StringIO(content))
-    # Drop junk Unnamed columns sometimes present in Excel exports
     keep = [c for c in df.columns if not str(c).lower().startswith("unnamed")]
     df = df[keep]
     df.columns = [str(c).strip().lower() for c in df.columns]
@@ -131,7 +121,6 @@ def _download_csv_df(file_key: str) -> pd.DataFrame:
 
 
 def truncate_bronze_tables(**_context):
-    """Empty Bronze tables before a full reload (Part 1 advice)."""
     hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
     conn = hook.get_conn()
     cur = conn.cursor()
@@ -144,9 +133,8 @@ def truncate_bronze_tables(**_context):
 
 
 def load_csv_to_postgres(file_key: str, table_name: str, listings: bool = False, **_context):
-    """Read one CSV from GCS and INSERT into the target Bronze table."""
+    """Legacy path – prefer airbnb_sydney_elt_dag_v2.py (COPY)."""
     df = _download_csv_df(file_key)
-
     if listings:
         missing = [c for c in LISTINGS_COLUMNS if c not in df.columns]
         if missing:
@@ -155,7 +143,6 @@ def load_csv_to_postgres(file_key: str, table_name: str, listings: bool = False,
         for col in ("scraped_date", "host_since"):
             df[col] = df[col].apply(_normalize_date)
 
-    # Census / LGA CSVs may arrive with original ABS casing – already lowercased
     cols = list(df.columns)
     placeholders = ", ".join(["%s"] * len(cols))
     col_sql = ", ".join(cols)
@@ -164,14 +151,12 @@ def load_csv_to_postgres(file_key: str, table_name: str, listings: bool = False,
     hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
     conn = hook.get_conn()
     cur = conn.cursor()
-
-    rows = []
-    for record in df.itertuples(index=False, name=None):
-        clean = tuple(None if (isinstance(v, float) and pd.isna(v)) or pd.isna(v) else v for v in record)
-        rows.append(clean)
-
     from psycopg2.extras import execute_batch
 
+    rows = [
+        tuple(None if (isinstance(v, float) and pd.isna(v)) or pd.isna(v) else v for v in record)
+        for record in df.itertuples(index=False, name=None)
+    ]
     execute_batch(cur, insert_sql, rows, page_size=1000)
     conn.commit()
     cur.close()
@@ -182,37 +167,28 @@ def load_csv_to_postgres(file_key: str, table_name: str, listings: bool = False,
 with DAG(
     dag_id="sydney_airbnb_bronze_elt",
     default_args=default_args,
-    description=(
-        "Part 1+3: load Census/LGA + Sydney Airbnb months into Bronze Postgres. "
-        "dbt Cloud is triggered manually after each month."
-    ),
+    description="LEGACY v1 – use sydney_airbnb_bronze_elt_v2 instead",
     schedule_interval=None,
     catchup=False,
     max_active_runs=1,
-    tags=["assignment3", "airbnb", "sydney", "bronze"],
+    tags=["assignment3", "airbnb", "sydney", "bronze", "legacy"],
 ) as dag:
 
     start = DummyOperator(task_id="start")
-
     truncate = PythonOperator(
         task_id="truncate_bronze_tables",
         python_callable=truncate_bronze_tables,
     )
-
-    load_static = []
-    for table, path in STATIC_FILES.items():
-        short = table.split(".")[-1]
-        task = PythonOperator(
-            task_id=f"load_{short}",
+    static_load_tasks = [
+        PythonOperator(
+            task_id=f"load_{table.split('.')[-1]}",
             python_callable=load_csv_to_postgres,
             op_kwargs={"file_key": path, "table_name": table, "listings": False},
         )
-        load_static.append(task)
-
-    # Sequential monthly loads so Part 3 chronological integrity is preserved
-    monthly_tasks = []
-    for month in MONTHLY_FILES:
-        task = PythonOperator(
+        for table, path in STATIC_FILES.items()
+    ]
+    monthly_tasks = [
+        PythonOperator(
             task_id=f"load_listings_{month}",
             python_callable=load_csv_to_postgres,
             op_kwargs={
@@ -221,14 +197,10 @@ with DAG(
                 "listings": True,
             },
         )
-        monthly_tasks.append(task)
-
-    # Reminder node only – dbt is NOT invoked by Airflow
-    remind_dbt = DummyOperator(
-        task_id="manual_dbt_cloud_after_each_month",
-    )
-
+        for month in MONTHLY_FILES
+    ]
+    remind_dbt = DummyOperator(task_id="manual_dbt_cloud_after_each_month")
     end = DummyOperator(task_id="end")
 
-    start >> truncate >> load_static
-    chain(*load_static, *monthly_tasks, remind_dbt, end)
+    start >> truncate >> static_load_tasks
+    chain(*static_load_tasks, *monthly_tasks, remind_dbt, end)
