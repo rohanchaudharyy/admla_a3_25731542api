@@ -1,0 +1,22 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: "Raw tables loaded by Airflow into the Bronze schema"
+    schema: bronze
+    tables:
+      - name: listings_raw
+        description: "Sydney Airbnb curated listings May 2020 – Apr 2021"
+        columns:
+          - name: listing_id
+            tests: [not_null]
+          - name: scraped_date
+            tests: [not_null]
+      - name: census_g01_raw
+        description: "ABS 2016 Census G01 Selected Person Characteristics (LGA)"
+      - name: census_g02_raw
+        description: "ABS 2016 Census G02 Selected Medians and Averages (LGA)"
+      - name: lga_code_raw
+        description: "NSW LGA code to name mapping"
+      - name: lga_suburb_raw
+        description: "NSW suburb to LGA name mapping"

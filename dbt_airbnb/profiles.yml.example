@@ -1,0 +1,16 @@
+# Copy to ~/.dbt/profiles.yml (or configure in dbt Cloud).
+# Do not commit real passwords.
+
+sydney_airbnb_dw:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DBT_HOST', '127.0.0.1') }}"
+      user: "{{ env_var('DBT_USER', 'postgres') }}"
+      password: "{{ env_var('DBT_PASSWORD') }}"
+      port: "{{ env_var('DBT_PORT', 5432) | int }}"
+      dbname: "{{ env_var('DBT_DBNAME', 'postgres') }}"
+      schema: bronze
+      threads: 4
+      sslmode: require
