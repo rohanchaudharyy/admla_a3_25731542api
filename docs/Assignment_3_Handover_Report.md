@@ -108,9 +108,9 @@ Queries live in `part_4.sql`. They must be executed on a warehouse populated wit
 
 > **Evidence note:** Screenshots / numeric result grids must be captured from DBeaver after a successful end-to-end run. Invented result tables are not included. Each subsection states the SQL logic and how to interpret outcomes for **Sydney**.
 
-### 4a – Top 13 vs bottom 13 LGAs (revenue per active listing, last 12 months)
+### 4a – Top 3 vs bottom 3 LGAs (revenue per active listing, last 12 months)
 
-**Method:** Average `estimated_revenue` for active listings by `lga_code` over the last 12 months; rank; compare Census age shares and `average_household_size` for top 13 vs bottom 13.
+**Method:** Average `estimated_revenue` for active listings by `lga_code` over the last 12 months; rank; compare Census age shares and `average_household_size` for top 3 vs bottom 3.
 
 **Expected insight pattern:** Higher-revenue Sydney LGAs (often eastern/harbour councils) tend to show different age mixes and household sizes than lower-revenue outer LGAs—compare `% 0–14`, `% 15–64`, `% 65+`, and mean household size between groups. Report the LGA name lists from the query `lgas` column as evidence.
 
@@ -127,9 +127,9 @@ Queries live in `part_4.sql`. They must be executed on a warehouse populated wit
 
 State the coefficient from the live query and avoid claiming causation (amenities, tourism, dwelling mix confound age).
 
-### 4c – Best listing type for top 15 neighbourhoods (max stays)
+### 4c – Best listing type for top 5 neighbourhoods (max stays)
 
-**Method:** Identify top 15 `listing_neighbourhood` by avg estimated revenue per active listing; within each, pick `(property_type, room_type, accommodates)` with maximum `sum(number_of_stays)`.
+**Method:** Identify top 5 `listing_neighbourhood` by avg estimated revenue per active listing; within each, pick `(property_type, room_type, accommodates)` with maximum `sum(number_of_stays)`.
 
 **Recommendation:** For each high-revenue neighbourhood, promote the winning capacity/room mix (often entire-home mid-capacity in Sydney coastal LGAs) in host onboarding guides.
 

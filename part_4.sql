@@ -1,18 +1,17 @@
 -- =============================================================================
 -- Part 4: Ad-hoc analysis – Sydney Airbnb + Census (May 2020 – Apr 2021)
 -- Student: Akshat Dubey
--- Run against Gold / Datamart schemas after dbt build.
--- Metric definitions (standard):
---   Active listing: has_availability = true
---   Stays (active) = 30 - availability_30
---   Est. revenue per active listing = stays * price
---   Window: last 12 months of scraped data (full assignment period)
+-- Brief (clean): top/bottom 3 LGAs; top 5 listing_neighbourhoods
+-- Run in DBeaver on Postgres after full dbt build (gold.*).
+-- Active listing: has_availability = TRUE
+-- Est. revenue / stays come from gold.fact_listing
 -- =============================================================================
+
 
 -- -----------------------------------------------------------------------------
 -- 4a. Demographic differences (age groups, household size) between the
---     top 13 and lowest 13 LGAs by avg estimated revenue per active listing
---     over the last 12 months (Sydney LGAs).
+--     top 3 and lowest 3 LGAs by avg estimated revenue per active listing
+--     over the last 12 months.
 -- -----------------------------------------------------------------------------
 WITH revenue_by_lga AS (
     SELECT
@@ -39,11 +38,11 @@ top_bottom AS (
         lga_code,
         avg_revenue_per_active_listing,
         CASE
-            WHEN rank_top <= 13 THEN 'Top 13'
-            WHEN rank_bottom <= 13 THEN 'Bottom 13'
+            WHEN rank_top <= 3 THEN 'Top 3'
+            WHEN rank_bottom <= 3 THEN 'Bottom 3'
         END AS performance_group
     FROM ranked
-    WHERE rank_top <= 13 OR rank_bottom <= 13
+    WHERE rank_top <= 3 OR rank_bottom <= 3
 ),
 demographics AS (
     SELECT
@@ -79,7 +78,8 @@ ORDER BY performance_group DESC;
 
 
 -- -----------------------------------------------------------------------------
--- 4b. Correlation: Census median age vs revenue per active listing (by LGA)
+-- 4b. Correlation: Census median age vs revenue per active listing (by LGA /
+--     neighbourhood grain used in fact = listing_neighbourhood → LGA).
 -- -----------------------------------------------------------------------------
 WITH revenue_by_lga AS (
     SELECT
@@ -110,7 +110,7 @@ FROM joined;
 
 -- -----------------------------------------------------------------------------
 -- 4c. Best listing type (property_type, room_type, accommodates) for the
---     top 15 listing_neighbourhoods by avg estimated revenue per active listing,
+--     top 5 listing_neighbourhoods by avg estimated revenue per active listing,
 --     chosen to maximise total stays.
 -- -----------------------------------------------------------------------------
 WITH neighbourhood_revenue AS (
@@ -122,11 +122,11 @@ WITH neighbourhood_revenue AS (
       AND listing_neighbourhood IS NOT NULL
     GROUP BY listing_neighbourhood
 ),
-top15 AS (
+top5 AS (
     SELECT listing_neighbourhood
     FROM neighbourhood_revenue
     ORDER BY avg_revenue_per_active_listing DESC
-    LIMIT 15
+    LIMIT 5
 ),
 stays_by_type AS (
     SELECT
@@ -141,7 +141,7 @@ stays_by_type AS (
     LEFT JOIN gold.dim_room_type rt ON f.room_type_sk = rt.room_type_sk
     LEFT JOIN gold.dim_accommodates ac ON f.accommodates_sk = ac.accommodates_sk
     WHERE f.has_availability = TRUE
-      AND f.listing_neighbourhood IN (SELECT listing_neighbourhood FROM top15)
+      AND f.listing_neighbourhood IN (SELECT listing_neighbourhood FROM top5)
     GROUP BY f.listing_neighbourhood, pt.property_type, rt.room_type, ac.accommodates
 ),
 best AS (
@@ -161,8 +161,7 @@ ORDER BY listing_neighbourhood;
 
 
 -- -----------------------------------------------------------------------------
--- 4d. Multi-listing hosts in Sydney: are properties concentrated in one LGA
---     or distributed across LGAs?
+-- 4d. Multi-listing hosts: concentrated in one LGA or spread across LGAs?
 -- -----------------------------------------------------------------------------
 WITH host_listings AS (
     SELECT
@@ -198,8 +197,8 @@ FROM host_summary;
 
 -- -----------------------------------------------------------------------------
 -- 4e. Single-listing hosts: does estimated revenue over the last 12 months
---     cover the annualised median mortgage repayment for that LGA?
---     Which Sydney LGA has the highest % of hosts that can cover it?
+--     cover annualised median mortgage (median_mortgage_repay_monthly * 12)?
+--     Which LGA has the highest % of hosts that can cover it?
 -- -----------------------------------------------------------------------------
 WITH single_hosts AS (
     SELECT host_id
@@ -244,7 +243,7 @@ lga_summary AS (
         round(sum(covers_mortgage) * 100.0 / nullif(count(*), 0), 2) AS pct_covering
     FROM coverage
     GROUP BY lga_code
-    HAVING count(*) >= 10   -- avoid tiny-sample LGAs
+    HAVING count(*) >= 10
 )
 SELECT
     lg.lga_name,
