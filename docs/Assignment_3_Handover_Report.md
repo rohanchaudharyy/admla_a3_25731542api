@@ -110,40 +110,40 @@ Queries live in `part_4.sql`. They must be executed on a warehouse populated wit
 
 ### 4a – Top 3 vs bottom 3 LGAs (revenue per active listing, last 12 months)
 
-**Method:** Average `estimated_revenue` for active listings by `lga_code` over the last 12 months; rank; compare Census age shares and `average_household_size` for top 3 vs bottom 3.
+**Method:** Average `estimated_revenue` for active listings by `lga_code` over the last 12 months; `dense_rank` top/bottom 3; return **one ranked row per LGA** with Census age shares (`pct_age_0_14`, `pct_age_15_64`, `pct_age_65_plus`), `average_household_size`, and `median_age_persons`.
 
-**Expected insight pattern:** Higher-revenue Sydney LGAs (often eastern/harbour councils) tend to show different age mixes and household sizes than lower-revenue outer LGAs—compare `% 0–14`, `% 15–64`, `% 65+`, and mean household size between groups. Report the LGA name lists from the query `lgas` column as evidence.
+**Expected insight pattern:** Compare Top ranks 1–3 vs Bottom ranks 1–3 on age mix and household size. Higher-revenue Sydney LGAs often differ from outer lower-revenue councils.
 
-**Recommendation:** Target host acquisition and pricing guidance toward LGAs whose demographics align with high guest spend, while monitoring housing-pressure communities in the bottom cohort.
+**Recommendation:** Target host acquisition toward demographics that align with high guest spend; monitor housing pressure in the bottom cohort.
 
-### 4b – Correlation: median age vs revenue per active listing
+### 4b – Correlation: neighbourhood median age vs revenue per active listing
 
-**Method:** `corr(median_age_persons, avg_revenue_per_active_listing)` across LGAs joined to `ref_census_g02`.
+**Method:** Grain = `listing_neighbourhood`. Avg estimated revenue per active listing by neighbourhood; map neighbourhood → LGA → Census G02 `median_age_persons` (LGA median age as neighbourhood proxy). **4b-i** ranked neighbourhood detail; **4b-ii** `corr(median_age, avg_revenue)` across neighbourhoods.
 
 **Interpretation:**  
 - |r| &lt; 0.3 → weak; age alone is a poor predictor.  
-- Positive r → older LGAs earn more per active listing.  
-- Negative r → younger LGAs earn more.  
+- Positive r → older neighbourhoods earn more per active listing.  
+- Negative r → younger neighbourhoods earn more.  
 
-State the coefficient from the live query and avoid claiming causation (amenities, tourism, dwelling mix confound age).
+State the live coefficient; do not claim causation.
 
 ### 4c – Best listing type for top 5 neighbourhoods (max stays)
 
-**Method:** Identify top 5 `listing_neighbourhood` by avg estimated revenue per active listing; within each, pick `(property_type, room_type, accommodates)` with maximum `sum(number_of_stays)`.
+**Method:** Top 5 `listing_neighbourhood` by avg estimated revenue (`neighbourhood_rank` 1–5); within each, pick `(property_type, room_type, accommodates)` with maximum `sum(number_of_stays)`.
 
-**Recommendation:** For each high-revenue neighbourhood, promote the winning capacity/room mix (often entire-home mid-capacity in Sydney coastal LGAs) in host onboarding guides.
+**Recommendation:** Promote the winning capacity/room mix for each high-revenue neighbourhood in host onboarding.
 
 ### 4d – Multi-listing hosts: concentrated vs distributed LGAs
 
-**Method:** Hosts with &gt;1 distinct `listing_id`; count distinct `lga_code`. Report `%` with `n_lgas = 1` vs `n_lgas > 1`.
+**Method:** Hosts with &gt;1 distinct `listing_id`; label each **Concentrated (same LGA)** vs **Distributed (multiple LGAs)**; report counts and percentages.
 
-**Interpretation:** A high concentration share means multi-property hosts specialise locally (portfolio risk tied to one council’s rules); a high distributed share implies geographic diversification across Sydney LGAs.
+**Interpretation:** High concentration → local specialisation; high distribution → geographic diversification across Sydney LGAs.
 
 ### 4e – Single-listing hosts vs annualised median mortgage
 
-**Method:** Hosts with exactly one listing; sum active estimated revenue over last 12 months; compare to `median_mortgage_repay_monthly * 12` from Census G02; rank LGAs by `%` covering (min 10 hosts).
+**Method:** Hosts with exactly one listing; sum active estimated revenue over last 12 months; compare to `median_mortgage_repay_monthly * 12`; rank LGAs by `%` covering (`coverage_rank`, min 10 hosts).
 
-**Recommendation:** Highlight the top LGA(s) where a single Airbnb listing most often covers the local median mortgage annualisation—useful for “host affordability” messaging—while noting Census medians are 2016 and revenue is an occupancy proxy, not net income.
+**Recommendation:** Highlight the highest `coverage_rank` LGA(s) for host-affordability messaging; note Census medians are 2016 and revenue is an occupancy proxy, not net income.
 
 ---
 
