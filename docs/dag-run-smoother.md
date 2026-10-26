@@ -1,70 +1,69 @@
-# Cloud Composer DAG – smoother Bronze loads (v2)
+# Composer run guide – `airbnb_census_elt_bronze_load`
 
-**Use:** `dags/airbnb_sydney_elt_dag_v2.py`  
-**DAG id:** `sydney_airbnb_bronze_elt_v2`  
-**Owner:** Akshat Dubey  
+**Submission DAG:** `dags/airbnb_census_elt_dag.py`  
+**DAG id:** `airbnb_census_elt_bronze_load`  
+**Author:** Akshat Dubey  
 
-Pause or ignore the legacy DAG `sydney_airbnb_bronze_elt` (`airbnb_sydney_elt_dag.py`).
+Do **not** use the deprecated `airbnb_sydney_elt_dag*.py` stubs.
 
-## Why v2 is faster / easier
+## Connection & paths
 
-| v1 (legacy) | v2 (preferred) |
-|-------------|----------------|
-| Row-by-row `INSERT` | Postgres `COPY FROM STDIN` |
-| Hard-coded bucket / always all months | Airflow Variables – change month without re-upload |
-| Always truncates | `airbnb_truncate` on/off |
+| Item | Value |
+|------|--------|
+| Airflow connection | `postgres` |
+| Data root on Composer | `/home/airflow/gcs/data/` (bucket `data/` folder) |
+| Schedule | `None` / manual only |
+| dbt | **Not** triggered by Airflow – run in dbt Cloud after each month |
 
-`schedule_interval=None`, `max_active_runs=1`, `catchup=False`. **dbt is not triggered** – run dbt Cloud manually after each successful month load.
-
-## Airflow Variables
-
-Set under **Admin → Variables** (or `airflow variables set …`):
-
-| Variable | Example | Meaning |
-|----------|---------|---------|
-| `airbnb_gcs_bucket` | `us-central1-bde-xxxx-bucket` | Composer data bucket (**no** `gs://` prefix). Fallback: edit `BUCKET_FALLBACK` in the DAG once. |
-| `airbnb_load_month` | `05_2020` or `all` | One month file stem, or full chronological chain. |
-| `airbnb_truncate` | `true` / `false` | `true` on **first** run only (wipes Bronze). Later months: `false`. |
-| `airbnb_load_static` | `false` (optional) | Force re-load Census/LGA when truncate is already `false`. |
-
-Connection id remains **`postgres_bde`**.
-
-## GCS upload paths (unchanged)
+### Expected files
 
 ```
-gs://<airbnb_gcs_bucket>/
-  data/Census LGA/2016Census_G01_NSW_LGA.csv
-  data/Census LGA/2016Census_G02_NSW_LGA.csv
-  data/NSW_LGA/NSW_LGA_CODE.csv
-  data/NSW_LGA/NSW_LGA_SUBURB.csv
-  data/listings/05_2020.csv
-  data/listings/06_2020.csv
-  … through …
-  data/listings/04_2021.csv
+/home/airflow/gcs/data/listings/05_2020.csv … 04_2021.csv
+/home/airflow/gcs/data/Census LGA/2016Census_G01_NSW_LGA.csv
+/home/airflow/gcs/data/Census LGA/2016Census_G02_NSW_LGA.csv
+/home/airflow/gcs/data/NSW_LGA/NSW_LGA_CODE.csv
+/home/airflow/gcs/data/NSW_LGA/NSW_LGA_SUBURB.csv
 ```
 
-Run `part_1.sql` in DBeaver before the first DAG trigger so Bronze tables exist.
+### Bronze tables (created by the DAG)
 
-## First run (Part 1)
+- `bronze.raw_listings` (+ `source_file`, `loaded_at`) — all listing cols TEXT  
+- `bronze.raw_census_g01` — G01 subset (totals + age bands)  
+- `bronze.raw_census_g02`  
+- `bronze.raw_nsw_lga_code`  
+- `bronze.raw_nsw_lga_suburb`  
 
-1. Upload Census + LGA + at least `05_2020.csv` (or all 12 if using `all`).
-2. Variables: `airbnb_gcs_bucket=<bucket>`, `airbnb_truncate=true`, `airbnb_load_month=05_2020` (or `all`).
-3. Trigger `sydney_airbnb_bronze_elt_v2`.
-4. Run **dbt snapshot** then **dbt run** in dbt Cloud.
+`part_1.sql` mirrors the same DDL for marking; the DAG’s `create_bronze_tables` task is enough in practice.
 
-## Later months (Part 3) – no DAG re-upload
+## Trigger months (Part 1 then Part 3)
 
-1. Ensure `data/listings/{next_month}.csv` is in the bucket.
-2. Set `airbnb_truncate=false`.
-3. Set `airbnb_load_month` to the next stem (e.g. `06_2020`). Other month tasks no-op quickly.
-4. Trigger the **same** DAG again → only that month `COPY`s into `bronze.listings_raw`.
-5. Manually run dbt again; repeat chronologically through `04_2021`.
+| Trigger conf | File loaded |
+|--------------|-------------|
+| `{}` or omit | `05_2020.csv` (default) |
+| `{"month": "06_2020"}` | `06_2020.csv` |
+| … | … |
+| `{"month": "04_2021"}` | `04_2021.csv` |
 
-Optional: set `airbnb_load_month=all` with `airbnb_truncate=true` once to reload everything in order (static in parallel after truncate, months chained).
+Each run: validate → create tables → **reload** Census/LGA references → upsert that Airbnb month (`DELETE` by `source_file` then `COPY`).
 
-## Checklist if a trigger feels “stuck”
+Continue **chronologically**. After **each** successful month:
 
-- Confirm Variable `airbnb_gcs_bucket` matches the bucket that actually has `data/…`.
-- Confirm connection `postgres_bde` points at Cloud SQL and Bronze DDL was applied.
-- Prefer v2 DAG; pause legacy v1 so you are not waiting on INSERT loops.
-- Single-month mode keeps each run short; avoid `all` until static files are confirmed.
+## dbt Cloud order (manual)
+
+1. `dbt run --select listings_clean host_entity listing_entity property_entity lga_code_clean lga_suburb_clean census_g01_clean census_g02_clean`  
+   (or `dbt run --select silver.*` / full project once models exist)
+2. `dbt snapshot` (host / listing / property timestamp SCD2)
+3. `dbt run` (Gold dims + fact + datamart views)
+
+Optional first-time: `dbt run --full-refresh` then snapshots as above after Bronze has data.
+
+## DBeaver verify
+
+```sql
+SELECT COUNT(*) FROM bronze.raw_listings;
+SELECT source_file, COUNT(*) FROM bronze.raw_listings GROUP BY 1 ORDER BY 1;
+SELECT COUNT(*) FROM bronze.raw_census_g01;
+SELECT COUNT(*) FROM bronze.raw_census_g02;
+SELECT COUNT(*) FROM bronze.raw_nsw_lga_code;
+SELECT COUNT(*) FROM bronze.raw_nsw_lga_suburb;
+```

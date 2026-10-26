@@ -11,13 +11,13 @@
 This project builds a production-style ELT pipeline for curated **Sydney Airbnb** listings (12 monthly scrapes) and **ABS 2016 Census** tables G01/G02 at LGA level, joined via NSW LGA↔suburb mappings.
 
 ```
-GCS (Composer bucket)
-        │  Airflow DAG (manual, schedule_interval=None)
+Composer bucket data/  (/home/airflow/gcs/data)
+        │  DAG airbnb_census_elt_bronze_load (manual; conf month)
         ▼
- Postgres bronze.*          ← Part 1 / Part 3 loads
+ Postgres bronze.raw_*     ← all TEXT; COPY from CSVs
         │  dbt Cloud (manual after each month)
         ▼
- silver (clean + snapshots) → gold (star + census refs) → datamart views
+ silver (cast + entities + snapshots) → gold → datamart views
         │
         ▼
  Part 4 ad-hoc SQL (business questions)
@@ -27,12 +27,12 @@ GCS (Composer bucket)
 
 | Layer | Role |
 |-------|------|
-| Bronze | Raw CSVs as loaded by Airflow; minimal typing |
-| Silver | Cleaned listings; host/listing/property **entities**; Census/LGA cleans; **timestamp SCD2 snapshots** |
+| Bronze | `raw_listings`, `raw_census_g01/g02`, `raw_nsw_lga_*` — TEXT as loaded by the working Composer DAG |
+| Silver | Cast types; host/listing/property **entities**; Census/LGA cleans; **timestamp SCD2 snapshots** |
 | Gold | ≥14 dimensions, Census G01/G02 **reference** tables, `fact_listing` (IDs + metrics) |
 | Datamart | Three analytical views with SCD2 point-in-time host joins |
 
-Airflow does **not** call dbt. After each chronological monthly load, run `dbt snapshot` then `dbt run` in dbt Cloud so SCD2 history accumulates correctly.
+Airflow does **not** call dbt. After each monthly trigger, run silver entities → `dbt snapshot` → `dbt run` so SCD2 history accumulates.
 
 ---
 
@@ -44,10 +44,10 @@ Airflow does **not** call dbt. After each chronological monthly load, run `dbt s
 - **Airbnb monthly CSVs** (`05_2020.csv` … `04_2021.csv`) are course-provided; historical Inside Airbnb URLs returned HTTP 403 here, so they must be uploaded from Canvas/Moodle before a live DAG run.
 
 ### Part 1 – Bronze + Airflow
-1. Execute `part_1.sql` to create `bronze` tables (`listings_raw`, `census_g01_raw`, `census_g02_raw`, `lga_code_raw`, `lga_suburb_raw`).
-2. Upload data folders to the Composer GCS bucket.
-3. Deploy **`dags/airbnb_sydney_elt_dag_v2.py`** (preferred; COPY + Variables). Set connection `postgres_bde` and Variables `airbnb_gcs_bucket`, `airbnb_truncate`, `airbnb_load_month` (see `docs/dag-run-smoother.md`). Pause legacy `airbnb_sydney_elt_dag.py` if both are present.
-4. First run: `airbnb_truncate=true`, load `05_2020` or `all`. Later months: `airbnb_truncate=false`, set `airbnb_load_month` to the next stem — no DAG re-upload.
+1. Upload files under Composer `data/` (listings, Census LGA, NSW_LGA). Connection id: **`postgres`**.
+2. Deploy **`dags/airbnb_census_elt_dag.py`** only (`dag_id=airbnb_census_elt_bronze_load`). It creates `bronze.raw_*` tables and loads via COPY. `part_1.sql` mirrors the same DDL for marking.
+3. Trigger with `{}` → loads `05_2020.csv`. Verify: `SELECT COUNT(*) FROM bronze.raw_listings;`.
+4. See `docs/dag-run-smoother.md` for the full runbook.
 
 ### Part 2 – dbt Medallion
 Project path: `dbt_airbnb/`.
@@ -80,7 +80,7 @@ Project path: `dbt_airbnb/`.
 - **Revenue per host** = total estimated revenue ÷ distinct hosts
 
 ### Part 3 – Remaining months
-The same DAG loads months sequentially. Operationally: after each month lands in Bronze, manually run dbt snapshots + models before the next month so SCD2 versions align with scrape time.
+Re-trigger the **same** DAG with `{"month":"06_2020"}` … `{"month":"04_2021"}` in order. Each run reloads Census/LGA references and replaces that month’s listings by `source_file`. After each success: silver → snapshot → run in dbt Cloud.
 
 ### Part 4 – Ad-hoc analysis
 Queries live in `part_4.sql`. They must be executed on a warehouse populated with all 12 months. Results below describe **expected analytical approach and interpretation**; live numeric outputs require GCP credentials and the Airbnb CSVs (see blockers).
@@ -98,8 +98,9 @@ Queries live in `part_4.sql`. They must be executed on a warehouse populated wit
 | `listing_id` alone as PK | Composite `(listing_id, scraped_date)` for monthly history |
 | Suburb vs LGA for hosts | `dim_host_neighbourhood` maps suburb → `host_neighbourhood_lga` via `lga_suburb` |
 | dbt custom schemas becoming `target_silver` | `generate_schema_name` macro forces bare `silver` / `gold` / `datamart` |
-| Slow Composer loads with row-by-row INSERT (v1) | Added v2 DAG using Postgres COPY + Airflow Variables |
-| No Cloud Composer / Cloud SQL / dbt Cloud credentials in this environment | All SQL/Python/dbt authored offline; live run left for student GCP project |
+| Earlier pack used different Bronze names / `postgres_bde` | Aligned entire pack to working DAG `airbnb_census_elt_bronze_load` (`bronze.raw_*`, conn `postgres`) |
+| G01 DAG load is a column subset | Silver/Gold Census G01 use only totals + age bands available from the DAG |
+| No Cloud Composer / Cloud SQL / dbt Cloud credentials in this coding environment | Pack matches the DAG that already runs on the student’s Composer |
 
 ---
 
@@ -156,16 +157,16 @@ flowchart LR
     L[NSW LGA maps]
   end
   subgraph airflow [Airflow Composer]
-    D[sydney_airbnb_bronze_elt]
+    D[airbnb_census_elt_bronze_load]
   end
   subgraph pg [Postgres]
-    B[(bronze)]
+    B[(bronze.raw_*)]
     S[(silver + snapshots)]
     G[(gold dims + fact)]
     M[(datamart views)]
   end
   subgraph dbt [dbt Cloud manual]
-    R[snapshot then run]
+    R[entities then snapshot then run]
   end
   A --> D
   C --> D
@@ -180,17 +181,18 @@ flowchart LR
 ## 6. Repository map
 
 - `part_1.sql`, `part_4.sql`
-- `dags/airbnb_sydney_elt_dag.py`
+- `dags/airbnb_census_elt_dag.py` (submission); sydney_* DAG files are deprecated stubs
 - `dbt_airbnb/models/{bronze,silver,gold,datamart}`, `dbt_airbnb/snapshots/`, `dbt_airbnb/dbt_project.yml`
+- `docs/dag-run-smoother.md` – trigger conf + dbt order
 - `data/` reference extracts + listings schema note
 - Submission zip: `Assignment_3_Akshat_Dubey.zip`
 
 ---
 
-## 7. What still needs a live GCP / dbt Cloud run
+## 7. Live verification on Composer / dbt Cloud
 
-1. Upload 12 Airbnb month files; set Composer bucket name + Postgres connection.  
-2. Execute DAG; run dbt snapshot/run (optionally month-by-month).  
+1. Confirm DAG already loads: `SELECT COUNT(*) FROM bronze.raw_listings;` and counts by `source_file`.  
+2. Trigger remaining months via `{"month":"MM_YYYY"}`; after each: silver → snapshot → run.  
 3. Execute `part_4.sql`; paste result screenshots into this report before Canvas submit.  
 4. Point dbt Cloud at the same Postgres and sync the `dbt_airbnb` folder.
 

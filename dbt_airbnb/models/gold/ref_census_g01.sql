@@ -1,6 +1,6 @@
 {{ config(schema='gold', materialized='table') }}
 
-/* Census G01 reference data in Gold (not SCD – static 2016 snapshot). */
+/* Census G01 reference – columns available from the Composer DAG load subset. */
 
 SELECT
     md5(lga_code) AS census_g01_sk,
@@ -19,11 +19,5 @@ SELECT
     age_55_64,
     age_65_74,
     age_75_84,
-    age_85_plus,
-    indigenous_population,
-    born_overseas_population,
-    born_australia_population,
-    australian_citizen_population,
-    english_only_home,
-    other_language_home
+    age_85_plus
 FROM {{ ref('census_g01_clean') }}

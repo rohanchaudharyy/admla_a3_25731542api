@@ -6,7 +6,7 @@ SELECT DISTINCT
     trim(s.suburb_name) AS suburb_name,
     lower(trim(s.suburb_name)) AS suburb_name_norm,
     c.lga_code
-FROM {{ source('bronze', 'lga_suburb_raw') }} s
+FROM {{ source('bronze', 'raw_nsw_lga_suburb') }} s
 LEFT JOIN {{ ref('lga_code_clean') }} c
     ON lower(trim(s.lga_name)) = c.lga_name_norm
-WHERE s.suburb_name IS NOT NULL
+WHERE nullif(trim(s.suburb_name), '') IS NOT NULL
