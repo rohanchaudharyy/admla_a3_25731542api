@@ -3,8 +3,9 @@
 -- Student: Akshat Dubey
 -- Brief (clean): top/bottom 3 LGAs; top 5 listing_neighbourhoods
 -- Run in DBeaver on Postgres after full dbt build (gold.*).
--- Active listing: has_availability = TRUE
--- Est. revenue / stays come from gold.fact_listing
+--
+-- Explicit ::numeric casts on all avg/sum/corr inputs: live Gold may still
+-- store metrics / census fields as TEXT depending on materialisation history.
 -- =============================================================================
 
 
@@ -16,9 +17,9 @@
 WITH revenue_by_lga AS (
     SELECT
         f.lga_code,
-        avg(f.estimated_revenue) AS avg_revenue_per_active_listing
+        avg(f.estimated_revenue::numeric) AS avg_revenue_per_active_listing
     FROM gold.fact_listing f
-    WHERE f.has_availability = TRUE
+    WHERE f.has_availability IS TRUE
       AND f.lga_code IS NOT NULL
       AND f.scraped_date >= (
             SELECT max(scraped_date) - INTERVAL '12 months' FROM gold.fact_listing
@@ -50,13 +51,15 @@ demographics AS (
         tb.lga_code,
         lg.lga_name,
         tb.avg_revenue_per_active_listing,
-        g01.total_population,
-        g01.age_0_4 + g01.age_5_14 AS age_0_14,
-        g01.age_15_19 + g01.age_20_24 + g01.age_25_34
-            + g01.age_35_44 + g01.age_45_54 + g01.age_55_64 AS age_15_64,
-        g01.age_65_74 + g01.age_75_84 + g01.age_85_plus AS age_65_plus,
-        g02.average_household_size,
-        g02.median_age_persons
+        g01.total_population::numeric AS total_population,
+        (g01.age_0_4::numeric + g01.age_5_14::numeric) AS age_0_14,
+        (g01.age_15_19::numeric + g01.age_20_24::numeric + g01.age_25_34::numeric
+            + g01.age_35_44::numeric + g01.age_45_54::numeric + g01.age_55_64::numeric
+        ) AS age_15_64,
+        (g01.age_65_74::numeric + g01.age_75_84::numeric + g01.age_85_plus::numeric)
+            AS age_65_plus,
+        g02.average_household_size::numeric AS average_household_size,
+        g02.median_age_persons::numeric AS median_age_persons
     FROM top_bottom tb
     LEFT JOIN gold.dim_lga lg ON tb.lga_code = lg.lga_code
     LEFT JOIN gold.ref_census_g01 g01 ON tb.lga_code = g01.lga_code
@@ -65,12 +68,18 @@ demographics AS (
 SELECT
     performance_group,
     count(*) AS n_lgas,
-    round(sum(age_0_14) * 100.0 / nullif(sum(total_population), 0), 2) AS pct_age_0_14,
-    round(sum(age_15_64) * 100.0 / nullif(sum(total_population), 0), 2) AS pct_age_15_64,
-    round(sum(age_65_plus) * 100.0 / nullif(sum(total_population), 0), 2) AS pct_age_65_plus,
-    round(avg(average_household_size)::numeric, 2) AS avg_household_size,
-    round(avg(median_age_persons)::numeric, 2) AS avg_median_age,
-    round(avg(avg_revenue_per_active_listing)::numeric, 2) AS avg_revenue_per_active_listing,
+    round(
+        sum(age_0_14) * 100.0 / nullif(sum(total_population), 0)
+    , 2) AS pct_age_0_14,
+    round(
+        sum(age_15_64) * 100.0 / nullif(sum(total_population), 0)
+    , 2) AS pct_age_15_64,
+    round(
+        sum(age_65_plus) * 100.0 / nullif(sum(total_population), 0)
+    , 2) AS pct_age_65_plus,
+    round(avg(average_household_size), 2) AS avg_household_size,
+    round(avg(median_age_persons), 2) AS avg_median_age,
+    round(avg(avg_revenue_per_active_listing), 2) AS avg_revenue_per_active_listing,
     string_agg(lga_name, ', ' ORDER BY avg_revenue_per_active_listing DESC) AS lgas
 FROM demographics
 GROUP BY performance_group
@@ -78,33 +87,31 @@ ORDER BY performance_group DESC;
 
 
 -- -----------------------------------------------------------------------------
--- 4b. Correlation: Census median age vs revenue per active listing (by LGA /
---     neighbourhood grain used in fact = listing_neighbourhood → LGA).
+-- 4b. Correlation: Census median age vs revenue per active listing (by LGA)
 -- -----------------------------------------------------------------------------
 WITH revenue_by_lga AS (
     SELECT
         lga_code,
-        avg(estimated_revenue) AS avg_revenue_per_active_listing
+        avg(estimated_revenue::numeric) AS avg_revenue_per_active_listing
     FROM gold.fact_listing
-    WHERE has_availability = TRUE
+    WHERE has_availability IS TRUE
       AND lga_code IS NOT NULL
     GROUP BY lga_code
 ),
 joined AS (
     SELECT
         r.lga_code,
-        g02.median_age_persons,
+        g02.median_age_persons::numeric AS median_age_persons,
         r.avg_revenue_per_active_listing
     FROM revenue_by_lga r
     INNER JOIN gold.ref_census_g02 g02 ON r.lga_code = g02.lga_code
-    WHERE g02.median_age_persons IS NOT NULL
+    WHERE nullif(trim(g02.median_age_persons::text), '') IS NOT NULL
 )
 SELECT
     count(*) AS n_lgas,
-    round(corr(
-        median_age_persons::numeric,
-        avg_revenue_per_active_listing::numeric
-    )::numeric, 4) AS pearson_corr_median_age_vs_revenue
+    round(
+        corr(median_age_persons, avg_revenue_per_active_listing)::numeric
+    , 4) AS pearson_corr_median_age_vs_revenue
 FROM joined;
 
 
@@ -116,9 +123,9 @@ FROM joined;
 WITH neighbourhood_revenue AS (
     SELECT
         listing_neighbourhood,
-        avg(estimated_revenue) AS avg_revenue_per_active_listing
+        avg(estimated_revenue::numeric) AS avg_revenue_per_active_listing
     FROM gold.fact_listing
-    WHERE has_availability = TRUE
+    WHERE has_availability IS TRUE
       AND listing_neighbourhood IS NOT NULL
     GROUP BY listing_neighbourhood
 ),
@@ -134,13 +141,13 @@ stays_by_type AS (
         pt.property_type,
         rt.room_type,
         ac.accommodates,
-        sum(f.number_of_stays) AS total_stays,
-        avg(f.estimated_revenue) AS avg_revenue_per_active_listing
+        sum(f.number_of_stays::numeric) AS total_stays,
+        avg(f.estimated_revenue::numeric) AS avg_revenue_per_active_listing
     FROM gold.fact_listing f
     LEFT JOIN gold.dim_property_type pt ON f.property_type_sk = pt.property_type_sk
     LEFT JOIN gold.dim_room_type rt ON f.room_type_sk = rt.room_type_sk
     LEFT JOIN gold.dim_accommodates ac ON f.accommodates_sk = ac.accommodates_sk
-    WHERE f.has_availability = TRUE
+    WHERE f.has_availability IS TRUE
       AND f.listing_neighbourhood IN (SELECT listing_neighbourhood FROM top5)
     GROUP BY f.listing_neighbourhood, pt.property_type, rt.room_type, ac.accommodates
 ),
@@ -211,10 +218,10 @@ host_annual_revenue AS (
     SELECT
         f.host_id,
         f.lga_code,
-        sum(f.estimated_revenue) AS revenue_last_12_months
+        sum(f.estimated_revenue::numeric) AS revenue_last_12_months
     FROM gold.fact_listing f
     INNER JOIN single_hosts s ON f.host_id = s.host_id
-    WHERE f.has_availability = TRUE
+    WHERE f.has_availability IS TRUE
       AND f.lga_code IS NOT NULL
       AND f.scraped_date >= (
             SELECT max(scraped_date) - INTERVAL '12 months' FROM gold.fact_listing
@@ -226,14 +233,15 @@ coverage AS (
         h.host_id,
         h.lga_code,
         h.revenue_last_12_months,
-        (g02.median_mortgage_repay_monthly * 12) AS annual_median_mortgage,
+        (g02.median_mortgage_repay_monthly::numeric * 12) AS annual_median_mortgage,
         CASE
-            WHEN h.revenue_last_12_months >= (g02.median_mortgage_repay_monthly * 12)
+            WHEN h.revenue_last_12_months
+                 >= (g02.median_mortgage_repay_monthly::numeric * 12)
                 THEN 1 ELSE 0
         END AS covers_mortgage
     FROM host_annual_revenue h
     INNER JOIN gold.ref_census_g02 g02 ON h.lga_code = g02.lga_code
-    WHERE g02.median_mortgage_repay_monthly IS NOT NULL
+    WHERE nullif(trim(g02.median_mortgage_repay_monthly::text), '') IS NOT NULL
 ),
 lga_summary AS (
     SELECT
