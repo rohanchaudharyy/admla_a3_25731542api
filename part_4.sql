@@ -38,52 +38,47 @@ top_bottom AS (
     SELECT
         lga_code,
         avg_revenue_per_active_listing,
+        rank_top,
+        rank_bottom,
         CASE
             WHEN rank_top <= 3 THEN 'Top 3'
             WHEN rank_bottom <= 3 THEN 'Bottom 3'
-        END AS performance_group
+        END AS performance_group,
+        CASE
+            WHEN rank_top <= 3 THEN rank_top
+            ELSE rank_bottom
+        END AS revenue_rank
     FROM ranked
     WHERE rank_top <= 3 OR rank_bottom <= 3
-),
-demographics AS (
-    SELECT
-        tb.performance_group,
-        tb.lga_code,
-        lg.lga_name,
-        tb.avg_revenue_per_active_listing,
-        g01.total_population::numeric AS total_population,
-        (g01.age_0_4::numeric + g01.age_5_14::numeric) AS age_0_14,
-        (g01.age_15_19::numeric + g01.age_20_24::numeric + g01.age_25_34::numeric
-            + g01.age_35_44::numeric + g01.age_45_54::numeric + g01.age_55_64::numeric
-        ) AS age_15_64,
-        (g01.age_65_74::numeric + g01.age_75_84::numeric + g01.age_85_plus::numeric)
-            AS age_65_plus,
-        g02.average_household_size::numeric AS average_household_size,
-        g02.median_age_persons::numeric AS median_age_persons
-    FROM top_bottom tb
-    LEFT JOIN gold.dim_lga lg ON tb.lga_code = lg.lga_code
-    LEFT JOIN gold.ref_census_g01 g01 ON tb.lga_code = g01.lga_code
-    LEFT JOIN gold.ref_census_g02 g02 ON tb.lga_code = g02.lga_code
 )
 SELECT
-    performance_group,
-    count(*) AS n_lgas,
+    tb.performance_group,
+    tb.revenue_rank,
+    lg.lga_name,
+    tb.lga_code,
+    round(tb.avg_revenue_per_active_listing, 2) AS avg_revenue_per_active_listing,
     round(
-        sum(age_0_14) * 100.0 / nullif(sum(total_population), 0)
+        (g01.age_0_4::numeric + g01.age_5_14::numeric)
+            * 100.0 / nullif(g01.total_population::numeric, 0)
     , 2) AS pct_age_0_14,
     round(
-        sum(age_15_64) * 100.0 / nullif(sum(total_population), 0)
+        (g01.age_15_19::numeric + g01.age_20_24::numeric + g01.age_25_34::numeric
+            + g01.age_35_44::numeric + g01.age_45_54::numeric + g01.age_55_64::numeric)
+            * 100.0 / nullif(g01.total_population::numeric, 0)
     , 2) AS pct_age_15_64,
     round(
-        sum(age_65_plus) * 100.0 / nullif(sum(total_population), 0)
+        (g01.age_65_74::numeric + g01.age_75_84::numeric + g01.age_85_plus::numeric)
+            * 100.0 / nullif(g01.total_population::numeric, 0)
     , 2) AS pct_age_65_plus,
-    round(avg(average_household_size), 2) AS avg_household_size,
-    round(avg(median_age_persons), 2) AS avg_median_age,
-    round(avg(avg_revenue_per_active_listing), 2) AS avg_revenue_per_active_listing,
-    string_agg(lga_name, ', ' ORDER BY avg_revenue_per_active_listing DESC) AS lgas
-FROM demographics
-GROUP BY performance_group
-ORDER BY performance_group DESC;
+    round(g02.average_household_size::numeric, 2) AS average_household_size,
+    round(g02.median_age_persons::numeric, 2) AS median_age_persons
+FROM top_bottom tb
+LEFT JOIN gold.dim_lga lg ON tb.lga_code = lg.lga_code
+LEFT JOIN gold.ref_census_g01 g01 ON tb.lga_code = g01.lga_code
+LEFT JOIN gold.ref_census_g02 g02 ON tb.lga_code = g02.lga_code
+ORDER BY
+    CASE tb.performance_group WHEN 'Top 3' THEN 0 ELSE 1 END,
+    tb.revenue_rank;
 
 
 -- -----------------------------------------------------------------------------
@@ -130,10 +125,16 @@ WITH neighbourhood_revenue AS (
     GROUP BY listing_neighbourhood
 ),
 top5 AS (
-    SELECT listing_neighbourhood
-    FROM neighbourhood_revenue
-    ORDER BY avg_revenue_per_active_listing DESC
-    LIMIT 5
+    SELECT *
+    FROM (
+        SELECT
+            listing_neighbourhood,
+            avg_revenue_per_active_listing,
+            dense_rank() OVER (ORDER BY avg_revenue_per_active_listing DESC)
+                AS neighbourhood_rank
+        FROM neighbourhood_revenue
+    ) r
+    WHERE neighbourhood_rank <= 5
 ),
 stays_by_type AS (
     SELECT
@@ -162,9 +163,17 @@ best AS (
     FROM stays_by_type
     ORDER BY listing_neighbourhood, total_stays DESC
 )
-SELECT *
-FROM best
-ORDER BY listing_neighbourhood;
+SELECT
+    t.neighbourhood_rank,
+    b.listing_neighbourhood,
+    b.property_type,
+    b.room_type,
+    b.accommodates,
+    b.total_stays,
+    round(b.avg_revenue_per_active_listing, 2) AS avg_revenue_per_active_listing
+FROM best b
+INNER JOIN top5 t ON b.listing_neighbourhood = t.listing_neighbourhood
+ORDER BY t.neighbourhood_rank;
 
 
 -- -----------------------------------------------------------------------------
