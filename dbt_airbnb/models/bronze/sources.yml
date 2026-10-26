@@ -1,0 +1,24 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: "Raw tables loaded by airbnb_census_elt_bronze_load (Composer DAG)"
+    schema: bronze
+    tables:
+      - name: raw_listings
+        description: "Sydney Airbnb monthly listings (all TEXT) + source_file / loaded_at"
+        columns:
+          - name: listing_id
+            tests: [not_null]
+          - name: scraped_date
+            tests: [not_null]
+          - name: source_file
+            description: "e.g. 05_2020.csv"
+      - name: raw_census_g01
+        description: "ABS 2016 Census G01 subset loaded by the DAG (person totals + age bands)"
+      - name: raw_census_g02
+        description: "ABS 2016 Census G02 medians/averages"
+      - name: raw_nsw_lga_code
+        description: "NSW LGA code to name mapping"
+      - name: raw_nsw_lga_suburb
+        description: "NSW suburb to LGA name mapping"
